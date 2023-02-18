@@ -1,0 +1,131 @@
+#Einrichtung der Bibliotheken
+import RPi.GPIO as GPIO
+import time
+import atexit
+import aktoren as AKTOREN
+import sensoren as SENSOREN
+import segmenter
+import signal
+#Er macht IMMER ein cleanup, wenn Programm beendet wird
+def exit_verhalten():
+    print("Starte cleanup....")
+    try:
+        GPIO.cleanup()
+    except:
+        print("Da lief irgendwas schief du...")
+    print("Cleanup war erfolgreich")
+
+def theLogic():
+    i = 0 #counter -> Durchläufe (siehe Zeitintervall)
+    zeit = 0 #counter -> Zeit des Alarms
+    button_press = 0 #Counter -> button press counter
+    #Board Einstellungen: (In- & Output definieren)
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setwarnings(False)
+    GPIO.setup(AKTOREN.LED_R, GPIO.OUT)
+    GPIO.setup(AKTOREN.LED_G, GPIO.OUT)
+    GPIO.setup(AKTOREN.LED_B, GPIO.OUT)
+    GPIO.setup(AKTOREN.ALARM, GPIO.OUT)
+    GPIO.setup(SENSOREN.SHOCK, GPIO.IN)
+    GPIO.setup(SENSOREN.FLAME, GPIO.IN)
+    GPIO.setup(SENSOREN.BUTTON, GPIO.IN)
+
+
+    on = True #soll der code ausgeführt werden?/ ist das Gerät an?
+    touchinterval = 0.2 #(sekunden) entspricht 1 Tick -> abfragezeiten (Berechnung: Sekunden/Tick)
+    alarmart = '' # Alarmart
+    timetilalert = 3/touchinterval #sekunden -> Zeit bis der Alarm los geht
+    onouttime = 3/touchinterval  #sekunden -> zeit die man auf den button drücken muss zum an und ausmachen des gerätes
+    alarmstop = 1/touchinterval  #sekunden -> zeit die man auf den button drücken muss um den Alarm manuell aus zu schalten
+    autoaus = 3/touchinterval  #sekunden -> alarm geht automatisch aus wenn nichts (mehr) erkannt wird
+    totalAus = 9 #sekunden -> geht aus Schleife raus, dann Programm aus, alles tot und vorbei
+    auttoauscount = autoaus #zum rückzählen der Nicht-Erkennung des Alarms
+    autoalarm = False #ob der auto alarm überhaupt (schon) angehen soll
+    countdownShutdown = 5
+    start_time = int(time.time())
+    while button_press != totalAus: # code soll dauerhaft laufen
+        if(GPIO.input(SENSOREN.BUTTON) == 0): # 0 = wenn der button gedrückt ist
+            button_press = int(time.time()-start_time)
+            if(totalAus-button_press <= countdownShutdown):
+                    segmenter.defineChars(str(totalAus-button_press))
+            GPIO.output(AKTOREN.LED_B, GPIO.HIGH)
+            GPIO.output(AKTOREN.LED_R, GPIO.LOW)
+            GPIO.output(AKTOREN.LED_G, GPIO.LOW)
+        else:
+            button_press = 0
+            start_time = time.time()
+            GPIO.output(AKTOREN.LED_B, GPIO.LOW)
+#        if(button_press >= 25):
+#            k=6 #oben anzeigen
+#            if buttonprss % 5 == 0:
+#                k = k-1
+#            segmentanzeige(k)
+
+        if(button_press == onouttime): # Gerät an oder aus schalten
+            if on:
+                on = False
+            else:
+                on = True
+        if(on == False): # Zustand aus (nichts ist an)
+            GPIO.output(AKTOREN.LED_R, GPIO.LOW)
+            GPIO.output(AKTOREN.LED_G, GPIO.LOW)
+            GPIO.output(AKTOREN.LED_B, GPIO.LOW)
+            GPIO.output(AKTOREN.ALARM, GPIO.LOW)
+        else:
+            if(GPIO.input(SENSOREN.SHOCK)== 1 and GPIO.input(SENSOREN.FLAME) == 1):
+                print('Das Erdbeben brennt!')
+                segmenter.defineChars("V")
+                alarmart = 'Feuer & Erdbeben -> möglicher Vulkanausbruch'
+                zeit = zeit + 1
+                auttoauscount = autoaus
+            elif(GPIO.input(SENSOREN.SHOCK) == 1):
+                print('Erdbeben')
+                segmenter.defineChars("E")
+                alarmart = 'Erdbeben'
+                zeit = zeit + 1
+                auttoauscount = autoaus
+            elif(GPIO.input(SENSOREN.FLAME) == 1):
+                print('FEUER FEUER FEUER, STEIN STEIN STEIN')
+                segmenter.defineChars("F")
+                alarmart = 'Feuer'
+                zeit = zeit + 1
+                auttoauscount = autoaus
+
+# Folgendes Template kann zur Erweiterung des Geräts mit mehr Sensoren (wie z.B. dem Wasser-Sensor) genutzt werden:
+
+                #elif(GPIO.input('Ihr Sensor') == 1):
+                        ##print('ihre Test-warnmeldung',
+                        #alarmart = 'ihr Alarm'
+                        #zeit = zeit + 1
+                        #auttoauscount = autoaus
+
+            if(zeit >= timetilalert): # Alarm geht an
+                print('Alarm: ', alarmart)
+                GPIO.output(AKTOREN.ALARM, GPIO.HIGH)
+                GPIO.output(AKTOREN.LED_G, GPIO.LOW)
+                GPIO.output(AKTOREN.LED_R, GPIO.HIGH)
+                autoalarm = True
+            else:
+                print('Nüchts ', i)
+                segmenter.cleanAbschnitte()
+                GPIO.output(AKTOREN.LED_R, GPIO.LOW)
+                GPIO.output(AKTOREN.LED_G, GPIO.HIGH)
+                GPIO.output(AKTOREN.ALARM, GPIO.LOW)
+            if(autoalarm): #falls der alarm an ist aber nicht mehr passiert geht der Alarm wieder aus
+                auttoauscount = auttoauscount - 1
+                print(auttoauscount, " ", autoalarm)
+            if((zeit >= timetilalert and button_press >= alarmstop)  or (zeit >= timetilalert and  auttoauscount <= 0)): # alarm mamuell oder automatisch aus
+                print('alarm turned off')
+                auttoauscount = autoaus
+                autoalarm = False
+                GPIO.output(AKTOREN.ALARM, GPIO.LOW)
+                zeit = -10 # falls es z.B. noch brennt aber man den alarm trotzdem ausmachen will (zeit bis wieder getestet werden soll)
+
+        time.sleep(touchinterval) #(touchinterval)
+        i=i+1
+
+if __name__ == "__main__":
+    atexit.register(exit_verhalten)
+    signal.signal(signal.SIGTERM, exit_verhalten)
+    signal.signal(signal.SIGINT, exit_verhalten)
+    theLogic()

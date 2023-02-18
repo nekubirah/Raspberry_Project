@@ -1,0 +1,3 @@
+SHOCK = 16
+FLAME = 18
+BUTTON = 36
